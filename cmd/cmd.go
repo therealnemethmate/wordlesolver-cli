@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/therealnemethmate/wordlesolver-cli/internal"
+	"github.com/therealnemethmate/wordlesolver-cli/internal/recommendation"
 	"github.com/urfave/cli"
 )
 
@@ -20,9 +21,9 @@ func Start() error {
 		Description: Description,
 		Commands:    []cli.Command{},
 		Action: func(context *cli.Context) error {
-			recommender := internal.NewRecommender()
-			solver := internal.NewSolver(recommender)
-			return solver.Execute("_____", map[string]int{})
+			recommender := recommendation.NewRecommender()
+			executor := internal.NewExecutor(recommender)
+			return executor.Solve("_____", map[string]int{})
 		},
 	}).Run(os.Args)
 
