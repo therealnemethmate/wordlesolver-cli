@@ -23,7 +23,7 @@ func Start() error {
 		Action: func(context *cli.Context) error {
 			recommender := recommendation.NewRecommender()
 			executor := internal.NewExecutor(recommender)
-			return executor.Solve("_____", map[string]int{})
+			return executor.Solve("_____")
 		},
 	}).Run(os.Args)
 

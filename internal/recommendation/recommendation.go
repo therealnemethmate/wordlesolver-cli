@@ -19,7 +19,12 @@ type Recommender struct {
 }
 
 func NewRecommender() *Recommender {
-	return &Recommender{guess: ""}
+	return &Recommender{
+		guess:               "",
+		excludeCombinations: make(map[string][]int),
+		excludeLetters:      []string{},
+		includeLetters:      []string{},
+	}
 }
 
 func (rec *Recommender) getWordValue(word string) int {
@@ -31,7 +36,7 @@ func (rec *Recommender) getWordValue(word string) int {
 	return value
 }
 
-func (rec *Recommender) sortWords() {
+func (rec *Recommender) sortWords(words []string) []string {
 	sort.Slice(rec.words, func(a, b int) bool {
 		var (
 			valueA = rec.getWordValue(rec.words[a])
@@ -39,6 +44,7 @@ func (rec *Recommender) sortWords() {
 		)
 		return valueA >= valueB
 	})
+	return words
 }
 
 func (rec *Recommender) calculateLetterValues() {
@@ -52,7 +58,6 @@ func (rec *Recommender) calculateLetterValues() {
 			rec.letterValues[letter][i] += 1
 		}
 	}
-	log.Println(rec.letterValues)
 }
 
 func (rec *Recommender) loadWords() error {
@@ -65,35 +70,41 @@ func (rec *Recommender) loadWords() error {
 	return nil
 }
 
-func (rec *Recommender) mergeExcludeCombinations(excludeCombinations map[string]int) {
-	if rec.excludeCombinations == nil {
-		rec.excludeCombinations = map[string][]int{}
-	}
-	for k, v := range excludeCombinations {
-		if rec.excludeCombinations[k] == nil {
-			rec.excludeCombinations[k] = []int{v}
-		} else {
-			rec.excludeCombinations[k] = append(rec.excludeCombinations[k], v)
-		}
-	}
-}
+func (rec *Recommender) filterExcludedWords(wordState string, words []string) []string {
+	result := []string{}
 
-func (rec *Recommender) filterWords(wordState string) []string {
-	words := []string{}
-
-	for _, word := range rec.words {
+	for _, word := range words {
 		include := true
 		for i, char := range word {
 			letter := string(char)
-			if wordState[i] != '_' && string(wordState[i]) != letter {
+			if slices.Contains(rec.excludeCombinations[letter], i) {
 				include = false
-				break
-			} else if slices.Contains(rec.excludeCombinations[letter], i) {
-				include = false
-				break
 			} else if slices.Contains(rec.excludeLetters, letter) {
+				if strings.Contains(wordState, letter) {
+					// TODO handle what happens when it contains it twice
+				}
 				include = false
-				break
+			}
+		}
+		if include {
+			result = append(result, word)
+		}
+	}
+
+	return result
+}
+
+func (rec *Recommender) filterWords(wordState string, originalWords []string) []string {
+	words := []string{}
+
+	for _, word := range originalWords {
+		if len(word) != 5 {
+			break
+		}
+		include := true
+		for i, c := range wordState {
+			if c != '_' && c != '*' && string(word[i]) != string(c) {
+				include = false
 			}
 		}
 		if include {
@@ -101,59 +112,60 @@ func (rec *Recommender) filterWords(wordState string) []string {
 		}
 	}
 
-	for _, letter := range rec.includeLetters {
+	for i, char := range wordState {
+		if char != '_' && char != '*' && slices.Contains(rec.includeLetters, string(char)) {
+			slices.Delete(rec.includeLetters, i, i+1)
+		}
+	}
+
+	if len(rec.includeLetters) != 0 {
 		for _, word := range words {
-			if strings.Contains(word, letter) {
+			include := true
+			for _, letter := range rec.includeLetters {
+				if !strings.Contains(word, letter) {
+					include = false
+					break
+				}
+			}
+			if include {
 				words = append(words, word)
 			}
 		}
 	}
 
-	return words
+	return rec.filterExcludedWords(wordState, words)
 }
 
 func (rec *Recommender) addExcludedLetters(wordState string) {
-	for i, wordStateLetter := range wordState {
-		letter := string(rec.guess[i])
-
-		if wordStateLetter != '_' {
-			if !slices.Contains(rec.includeLetters, letter) {
-				rec.includeLetters = append(rec.includeLetters, letter)
-			}
-			break
+	for i, char := range wordState {
+		guessedLetter := string(rec.guess[i])
+		if guessedLetter == string(char) {
+			continue
 		}
-		if slices.Contains(rec.includeLetters, letter) {
-			if !strings.Contains(wordState, letter) {
-				break
-			}
-			if slices.Contains(rec.excludeCombinations[letter], i) {
-				break
-			}
-			if rec.excludeCombinations[letter] == nil {
-				rec.excludeCombinations[letter] = []int{i}
-			}
-			rec.excludeCombinations[letter] = append(rec.excludeCombinations[letter], i)
-			break
-		}
-		if slices.Contains(rec.excludeLetters, letter) {
-			break
-		}
-		if letter == string(wordStateLetter) {
-			break
-		}
-		rec.excludeLetters = append(rec.excludeLetters, letter)
-	}
-}
-
-func (rec *Recommender) addIncludedLetters(excludeCombinations map[string]int) {
-	for k := range excludeCombinations {
-		if !slices.Contains(rec.includeLetters, k) {
-			rec.includeLetters = append(rec.includeLetters, k)
+		if char == '_' && !slices.Contains(rec.includeLetters, guessedLetter) {
+			rec.excludeLetters = append(rec.excludeLetters, guessedLetter)
 		}
 	}
 }
 
-func (rec *Recommender) GetNext(wordState string, excludeCombinations map[string]int) (string, error) {
+func (rec *Recommender) addIncludedLetters(wordState string) {
+	for _, char := range wordState {
+		if char == '*' && !slices.Contains(rec.includeLetters, string(char)) {
+			rec.includeLetters = append(rec.includeLetters, string(char))
+		}
+	}
+}
+
+func (rec *Recommender) addCombinations(wordState string) {
+	for i, char := range wordState {
+		key := string(char)
+		if char == '*' && !slices.Contains(rec.excludeCombinations[key], i) {
+			rec.excludeCombinations[key] = append(rec.excludeCombinations[key], i)
+		}
+	}
+}
+
+func (rec *Recommender) GetNext(wordState string) (string, error) {
 	if rec.words == nil {
 		err := rec.loadWords()
 		if err != nil {
@@ -162,19 +174,21 @@ func (rec *Recommender) GetNext(wordState string, excludeCombinations map[string
 		if rec.letterValues == nil {
 			rec.calculateLetterValues()
 		}
-		rec.sortWords()
+		rec.words = rec.sortWords(rec.words)
 	}
 	if rec.guess == "" {
 		rec.guess = rec.words[0]
 		return rec.guess, nil
 	}
 
-	rec.addIncludedLetters(excludeCombinations)
+	rec.addIncludedLetters(wordState)
+	rec.addCombinations(wordState)
 	rec.addExcludedLetters(wordState)
-	rec.mergeExcludeCombinations(excludeCombinations)
-	rec.words = rec.filterWords(wordState)
+
+	rec.words = rec.filterWords(wordState, rec.words)
+
 	log.Printf("Include: %v, Exclude: %v, Comb: %v", rec.includeLetters, rec.excludeLetters, rec.excludeCombinations)
+	log.Println(rec.words)
 	rec.guess = rec.words[0]
-	log.Println(len(rec.words))
 	return rec.guess, nil
 }
